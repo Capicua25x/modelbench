@@ -119,8 +119,29 @@ print()
 print(f"  {'users':>5} | {'per-user tok/s':>14} | {'aggregate tok/s':>15} | {'avg latency':>11}")
 print(f"  {'-'*5}-+-{'-'*14}-+-{'-'*15}-+-{'-'*11}")
 
+def settle():
+    """Wait for the server to drain between levels — stragglers from the previous
+    cell otherwise bleed into the next cell's wall clock (observed as a mid-grid
+    dip, e.g. a c4 cell scoring below c6). Polls vLLM's /metrics for zero running
+    requests when exposed; falls back to a fixed pause."""
+    base = URL.rsplit("/v1", 1)[0]
+    deadline = time.time() + 90
+    while time.time() < deadline:
+        try:
+            m = urllib.request.urlopen(base + "/metrics", timeout=3).read().decode()
+            runn = sum(float(l.split()[-1]) for l in m.splitlines()
+                       if l.startswith("vllm:num_requests_running"))
+            if runn == 0:
+                time.sleep(3)   # scheduler cool-down after drain
+                return
+            time.sleep(2)
+        except Exception:
+            time.sleep(10)      # no metrics endpoint: fixed settle
+            return
+
 practical_max = LEVELS[0]
 for n in LEVELS:
+    settle()
     with concurrent.futures.ThreadPoolExecutor(max_workers=n) as ex:
         w0 = time.time()
         res = list(ex.map(one, range(n)))
