@@ -50,3 +50,27 @@ no client-side stop strings (`until:[]`) — stops inside reasoning silently tru
 * Never compare rates produced by different harnesses or different windows.
 
 Apache-2.0.
+
+## Reasoning-length / loop-rate runs (single hard item)
+
+`lengths/length_loop_run.py` is the instrument behind the serving-stack length-divergence
+investigation (n-rep runs of one deliberation-heavy item, outcome = TERMINATES / LOOP /
+UNDECIDED, loop-start token recorded). The request body is deliberately explicit — the
+request IS the experiment; read the module docstring before using it.
+
+Reproduce the published self-hosted row (n=18, cap 100k, t1.0/p1.0, no effort preamble):
+
+```bash
+BENCH_URL=http://localhost:8888/v1/chat/completions \
+CAP=100000 N_REP=18 SLOTS=6 TEMP=1.0 TOPP=1.0 EFFORT=none CUT=1 TAG=spec_t10p10 \
+python3 lengths/length_loop_run.py
+```
+
+Rules that carry over from the rest of this repo, plus two of its own:
+- **Validate with `CUT=0` first** on a configuration whose rate you already know — zero
+  false positives (sentenced-yet-terminated) before you trust `CUT=1`.
+- **Concurrency is part of the arm** (`SLOTS`): never pool runs taken at different
+  concurrency.
+- **The effort preamble is part of the arm**: `EFFORT=none` renders no preamble on the
+  stock DeepSeek-V4-Flash vLLM template; only `xhigh`/`max` reach the template (+79
+  tokens, the vendor's default render). Hold it constant across arms — or run both.
