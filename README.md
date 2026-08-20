@@ -58,6 +58,9 @@ investigation (n-rep runs of one deliberation-heavy item, outcome = TERMINATES /
 UNDECIDED, loop-start token recorded). The request body is deliberately explicit — the
 request IS the experiment; read the module docstring before using it.
 
+Dependency: `pip install datasets` (pulls the HLE item; the dataset is gated — accept its
+terms on HF and `huggingface-cli login` once).
+
 Reproduce the published self-hosted row (n=18, cap 100k, t1.0/p1.0, no effort preamble):
 
 ```bash
