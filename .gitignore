@@ -1,0 +1,8 @@
+# outputs
+results/
+conc-logs/
+*.log
+__pycache__/
+# the internal analista regression suite and anything derived from it stays out of this repo
+*analista*
+*_test_tenant_*
