@@ -77,3 +77,7 @@ Rules that carry over from the rest of this repo, plus two of its own:
 - **The effort preamble is part of the arm**: `EFFORT=none` renders no preamble on the
   stock DeepSeek-V4-Flash vLLM template; only `xhigh`/`max` reach the template (+79
   tokens, the vendor's default render). Hold it constant across arms — or run both.
+
+## License
+
+Apache-2.0 — see [LICENSE](LICENSE). Run it, fork it, ship it.
