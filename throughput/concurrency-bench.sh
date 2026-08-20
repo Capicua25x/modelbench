@@ -47,6 +47,20 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# GB10 hard cap (DGX Spark class: 140W SoC, 1.13L, firmware-controlled cooling, thermal trip ~104.8C).
+# Decode is bandwidth-bound on this SoC: one stream already saturates the memory subsystem, so levels
+# past ~6 measure queueing, not capacity — and sustained max-concurrency is the documented
+# thermal-shutdown regime. When the bench runs ON a GB10 box, levels above 6 are removed.
+if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | grep -q "GB10"; then
+    NEWLEVELS=""; CLAMPED=0
+    for L in $LEVELS; do if [ "$L" -gt 6 ] 2>/dev/null; then CLAMPED=1; else NEWLEVELS="$NEWLEVELS $L"; fi; done
+    if [ "$CLAMPED" = 1 ]; then
+        case " $NEWLEVELS " in *" 6 "*) : ;; *) NEWLEVELS="$NEWLEVELS 6" ;; esac
+        LEVELS="${NEWLEVELS# }"
+        echo "  ⚠ GB10 detected: levels >6 removed (thermal envelope; cap the serve with --max-num-seqs 6 too). Levels: $LEVELS"
+    fi
+fi
+
 if [ -z "$MODEL" ]; then
     MODEL=$(curl -s --max-time 5 "$URL/v1/models" | python3 -c "import sys,json
 try: print(json.load(sys.stdin)['data'][0]['id'])
