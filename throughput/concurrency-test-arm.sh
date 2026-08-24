@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Per-arm concurrency test — run it right after bringing a serving configuration up.
+# Per-arm concurrency test — RUN AFTER SWAP, BEFORE THE BENCH (operator 2026-08-16 10:15).
 # Measures the serving envelope so we (a) know the concurrency ceiling and (b) set the bench/HLE conc
 # BELOW the preemption cliff (the HLE-thrash lesson: 4×60K on a 255k pool = 1,979 preemptions).
 # Usage: ./concurrency-test-arm.sh <tag>   (server for <tag> must be up on :8011)
-set -u; TAG="${1:?tag}"; URL="${2:-http://localhost:8011}"
-BENCH="${BENCH_BIN:-$(dirname "$0")/concurrency-bench.sh}"
-S="${S:-$(dirname "$0")/conc-logs}"   # per-arm sweep logs
+set -u; TAG="${1:?tag}"; URL="${2:-http://localhost:8000}"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+BENCH="${BENCH_BIN:-$HERE/concurrency-bench.sh}"   # single source; override with BENCH_BIN
+S="${S:-$HERE/conc-logs}"   # per-arm sweep logs
 mkdir -p "$S"; say(){ echo "[$(date +%H:%M:%S)] [$TAG-conc] $*"; }
 say "server: $(curl -sm5 $URL/v1/models | python3 -c 'import sys,json;print([m[\"id\"] for m in json.load(sys.stdin)[\"data\"]])' 2>/dev/null)"
 # baseline preemption counter
@@ -15,7 +16,7 @@ say "preemptions at start: $P0"
 say "short-prompt sweep think ON, levels 1 4 8 16 32 64"
 "$BENCH" --url $URL --model qwen --think on --levels "1 4 8 16 32 64" > "$S/conc_${TAG}_short_thinkon.log" 2>&1
 say "short sweep done -> $S/conc_${TAG}_short_thinkon.log"
-# 2) realistic Anchor-scoped 6k-prompt sweep (where the KV pool actually bites)
+# 2) realistic 6k-prompt sweep (where the KV pool actually bites)
 say "6k-prompt sweep think ON, levels 1 4 8 16 32"
 "$BENCH" --url $URL --model qwen --think on --prompt-tokens 6000 --levels "1 4 8 16 32" > "$S/conc_${TAG}_6k_thinkon.log" 2>&1
 say "6k sweep done -> $S/conc_${TAG}_6k_thinkon.log"

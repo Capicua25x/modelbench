@@ -1,16 +1,24 @@
 #!/bin/bash
-# LLM Benchmark v3 — CONCURRENCY SWEEP
+# vLLM Concurrency Bench v3 — CONCURRENCY SWEEP
 # Measures decode throughput at multiple concurrency levels, reporting BOTH:
 #   • per-user tok/s  — what a single user *feels* at that load (the UX number)
 #   • aggregate tok/s — total system output (the capacity number)
 # plus average request latency. N=1 is the single-stream figure.
 #
-# Default target is the production vLLM unit (Qwen on :8011, OpenAI /v1/completions).
+# Default target is a local vLLM server (OpenAI-compatible /v1/completions).
 #
 # --prompt-tokens N pads a SHARED prefix to ~N tokens (identical across requests, so it's
-# prefix-cacheable) with a unique tail per request — models the ~6K Anchor-scoped schema
+# prefix-cacheable) with a unique tail per request — models a schema/tool-heavy system
 # prompt. Use it to get the KV/context-bound concurrency (the real chatbot shape), since
 # the default short prompt only shows the compute-bound ceiling.
+#
+# --trivial swaps the workload for the community peak-finder ("count to 300" per Tony/hdub):
+# 19-token prompt, natural termination, temp=0, MTP acceptance ~99%. This is what the pair
+# reports as ~86 tok/s at n=1 and what published headlines from peer stacks (DGX Spark, etc.)
+# mean when they cite a single tok/s figure. Use it to cross-check against community numbers;
+# do NOT read it as a realistic decode rate — see conc-logs/ds4-pair-patchA-2026-08-23.md
+# for the workload-mismatch lesson (compare like-for-like before investigating a perceived
+# gap: 30 seconds of `--trivial` up front saves an afternoon of chasing).
 #
 # Measured 2026-05-31 (Qwen3.6-35B-A3B MXFP4, vLLM TP2, dual R9700):
 #   short-prompt (compute-bound): n1=64, n16=46/u, n96=21/u, n128=17/u; ceiling ~96.
@@ -23,15 +31,18 @@
 #   ./concurrency-bench.sh --levels "1 16 32 64"            # custom levels
 #   ./concurrency-bench.sh --ceiling                        # wide sweep 1->128
 #   ./concurrency-bench.sh --prompt-tokens 6000 --levels "1 16 32 48 64"   # realistic prompt
-#   ./concurrency-bench.sh --url http://localhost:8011 --model qwen --max-tokens 256
+#   ./concurrency-bench.sh --trivial                        # community peak-finder (count-to-300)
+#   ./concurrency-bench.sh --trivial --levels "1 4 8"       # trivial-workload concurrency curve
+#   ./concurrency-bench.sh --url http://localhost:8000 --model qwen --max-tokens 256
 
-URL="${LLAMA_URL:-http://localhost:8011}"
+URL="${LLAMA_URL:-http://localhost:8000}"
 MODEL=""
 MAX_TOKENS=256
 PROMPT_TOKENS=0          # 0 = short prompt; >0 pads a shared (prefix-cacheable) prefix to ~N tokens
-LEVELS="1 16"            # default: the two the business cares about
+LEVELS="1 16"            # default: single-stream and a light-concurrency sanity check
 FLOOR=20                # per-user tok/s floor for the "practical ceiling" call
 THINK="raw"             # raw = /v1/completions raw prompt (historical); on|off = /v1/chat/completions + chat_template_kwargs.enable_thinking
+WORKLOAD="essay"        # essay (default: Spanish prose, ignore_eos, sustained decode) | trivial (--trivial: count-to-300, natural stop, temp=0 — community peak-finder)
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -42,6 +53,7 @@ while [[ $# -gt 0 ]]; do
         --levels)        LEVELS="$2";        shift 2 ;;
         --floor)         FLOOR="$2";         shift 2 ;;
         --think)         THINK="$2";         shift 2 ;;   # raw | on | off
+        --trivial)       WORKLOAD="trivial"; MAX_TOKENS=4000; PROMPT_TOKENS=0; shift ;;
         --ceiling)       LEVELS="1 4 8 16 24 32 48 64 96 128"; shift ;;
         *) shift ;;
     esac
@@ -69,39 +81,58 @@ except: print('')" 2>/dev/null)
 fi
 
 echo "=================================================================="
-echo "  LLM Benchmark v3 — concurrency sweep"
-echo "  Server: $URL   Model: $MODEL   max_tokens: $MAX_TOKENS   think: $THINK"
+echo "  vLLM Concurrency Bench v3 — concurrency sweep"
+echo "  Server: $URL   Model: $MODEL   max_tokens: $MAX_TOKENS   think: $THINK   workload: $WORKLOAD"
 echo "  Levels: $LEVELS   |   floor: ${FLOOR} tok/s   |   prompt: ${PROMPT_TOKENS} tok (0=short)"
 echo "  Date:   $(date '+%Y-%m-%d %H:%M:%S')"
 echo "=================================================================="
 
 URL="$URL" MODEL="$MODEL" MAX_TOKENS="$MAX_TOKENS" PROMPT_TOKENS="$PROMPT_TOKENS" \
-LEVELS="$LEVELS" FLOOR="$FLOOR" THINK="$THINK" python3 - <<'PY'
+LEVELS="$LEVELS" FLOOR="$FLOOR" THINK="$THINK" WORKLOAD="$WORKLOAD" python3 - <<'PY'
 import os, json, time, urllib.request, concurrent.futures
 
 URL = os.environ["URL"]; MODEL = os.environ["MODEL"]; THINK = os.environ.get("THINK", "raw")
+WORKLOAD = os.environ.get("WORKLOAD", "essay")
 MAXTOK = int(os.environ["MAX_TOKENS"]); FLOOR = float(os.environ["FLOOR"])
 PROMPT_TOKENS = int(os.environ.get("PROMPT_TOKENS", "0"))
 LEVELS = [int(x) for x in os.environ["LEVELS"].split()]
 
-_BASE = ("Escribe un ensayo largo y detallado sobre la logistica de una fabrica "
-         "de materiales de construccion en Republica Dominicana:")
-# Shared prefix (~PROMPT_TOKENS tokens) modeling the Anchor-scoped schema — identical
-# across requests (prefix-cacheable); each request appends a unique tail.
-_FILLER = ("Contexto del esquema ia.*: v_ventas_detalle (ventas, monto_neto_rd), "
-           "v_cxc_detalle (saldo), v_inventario_diario, v_pronostico_demanda, v_churn_clientes. ")
+_ESSAY = ("Write a long, detailed essay about the history and architecture of "
+          "distributed database systems:")
+# Community peak-finder (Tony/hdub): trivial prompt, digits out, natural termination — high
+# MTP acceptance (~99%) exposes the compute-bound headline number. NOT a realistic decode rate.
+_TRIVIAL = "Count from 1 to 300, separated by commas. Numbers only."
+# Shared prefix (~PROMPT_TOKENS tokens) modeling a schema/tool-heavy system prompt —
+# identical across requests (prefix-cacheable); each request appends a unique tail. Trivial
+# workload forces PROMPT_TOKENS=0 (bench-shell already does this) so PREFIX stays empty for it.
+_FILLER = ("System context: a generic multi-table schema with orders, customers, "
+           "inventory, invoices, and demand forecasts. ")
 PREFIX = ((_FILLER * (PROMPT_TOKENS * 4 // len(_FILLER) + 1))[:PROMPT_TOKENS * 4]
           if PROMPT_TOKENS > 0 else "")
 
 def one(uid):
-    prompt = (PREFIX + f"\n[solicitud {uid}] " + _BASE) if PROMPT_TOKENS > 0 else _BASE
-    if THINK == "raw":
+    if WORKLOAD == "trivial":
+        # Community peak-finder — match count300.py / Tony's shape exactly: chat/completions,
+        # no chat_template_kwargs override (server's baked-in default applies), natural
+        # termination, temp=0. --think is IGNORED here; the whole point of --trivial is
+        # comparability with the published number, so the wire shape is fixed. Per-request
+        # tag defeats prefix-cache dedup at n>1 without changing decode rate (19-token
+        # prompt, prefill is trivial either way).
+        prompt = f"[req {uid}] " + _TRIVIAL
+        body = json.dumps({"model": MODEL,
+                           "messages": [{"role": "user", "content": prompt}],
+                           "max_tokens": MAXTOK, "temperature": 0.0}).encode()
+        req = urllib.request.Request(URL + "/v1/chat/completions", data=body,
+                                     headers={"Content-Type": "application/json"})
+    elif THINK == "raw":
+        prompt = (PREFIX + f"\n[solicitud {uid}] " + _ESSAY) if PROMPT_TOKENS > 0 else _ESSAY
         body = json.dumps({"model": MODEL, "prompt": prompt, "max_tokens": MAXTOK,
                            "ignore_eos": True, "temperature": 0}).encode()
         req = urllib.request.Request(URL + "/v1/completions", data=body,
                                      headers={"Content-Type": "application/json"})
     else:
-        # chat endpoint so the template's thinking switch applies (production sampling)
+        # chat endpoint so the template's thinking switch applies (production sampling).
+        prompt = (PREFIX + f"\n[solicitud {uid}] " + _ESSAY) if PROMPT_TOKENS > 0 else _ESSAY
         body = json.dumps({"model": MODEL, "messages": [{"role": "user", "content": prompt}],
                            "max_tokens": MAXTOK, "ignore_eos": True,
                            "temperature": 0.6, "top_p": 0.95,
