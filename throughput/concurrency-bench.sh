@@ -1,11 +1,31 @@
 #!/bin/bash
-# vLLM Concurrency Bench v3 — CONCURRENCY SWEEP
+# vLLM Concurrency Bench v4 — CONCURRENCY SWEEP
 # Measures decode throughput at multiple concurrency levels, reporting BOTH:
 #   • per-user tok/s  — what a single user *feels* at that load (the UX number)
 #   • aggregate tok/s — total system output (the capacity number)
-# plus average request latency. N=1 is the single-stream figure.
+# plus average request latency and, when the server exposes spec-decode counters,
+# per-cell acceptance (accepted/draft) and tokens-per-step. N=1 is the single-stream figure.
 #
 # Default target is a local vLLM server (OpenAI-compatible /v1/completions).
+#
+# v4 (2026-08-24) — CONTENT-REPLAY FIX + ACCEPTANCE VISIBILITY. v3's essay workload used
+# ONE fixed prompt at temperature 0, so every request (and every warm re-run) regenerated
+# the same text. On servers with speculative decoding that is a double confound:
+#   1. REPLAY INFLATION — a stateful context-window drafter (DSpark-style) drafts text it
+#      has recently seen far better than novel text (measured up to 4.2 vs ~1.9
+#      accepted/draft for the same prompt shape), so warm re-runs inflate with the
+#      server's content history (boot freshness, run order, which workload ran last).
+#   2. CONTENT VARIANCE — prose acceptance is strongly topic-dependent (measured 1.3-4.2
+#      accepted/draft across topics at n=1, same server, minutes apart), so any
+#      single-prompt number is one draw from a wide distribution.
+# Measured on a GB10 pair: the SAME server config scored 87-153 aggregate tok/s at n=6
+# with zero config change — a spread previously misattributed to a serving-patch
+# regression. v4 therefore (a) rotates distinct essay topics per request with a
+# per-invocation nonce and temp 0.7, so no request regenerates text the drafter has seen;
+# (b) prints per-cell accepted/draft and tok/step from /metrics so acceptance effects are
+# visible instead of latent. Run MANY cells and average — topic variance is intrinsic.
+# Essay numbers from v4 are NOT comparable to v3 logs (v3's were replay-inflated on
+# spec-decode servers). --trivial is deliberately unchanged (community comparability).
 #
 # --prompt-tokens N pads a SHARED prefix to ~N tokens (identical across requests, so it's
 # prefix-cacheable) with a unique tail per request — models a schema/tool-heavy system
@@ -42,7 +62,7 @@ PROMPT_TOKENS=0          # 0 = short prompt; >0 pads a shared (prefix-cacheable)
 LEVELS="1 16"            # default: single-stream and a light-concurrency sanity check
 FLOOR=20                # per-user tok/s floor for the "practical ceiling" call
 THINK="raw"             # raw = /v1/completions raw prompt (historical); on|off = /v1/chat/completions + chat_template_kwargs.enable_thinking
-WORKLOAD="essay"        # essay (default: Spanish prose, ignore_eos, sustained decode) | trivial (--trivial: count-to-300, natural stop, temp=0 — community peak-finder)
+WORKLOAD="essay"        # essay (default: rotating-topic prose, temp 0.7, ignore_eos, sustained decode — replay-proof, see v4 note) | trivial (--trivial: count-to-300, natural stop, temp=0 — community peak-finder)
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -89,7 +109,7 @@ echo "=================================================================="
 
 URL="$URL" MODEL="$MODEL" MAX_TOKENS="$MAX_TOKENS" PROMPT_TOKENS="$PROMPT_TOKENS" \
 LEVELS="$LEVELS" FLOOR="$FLOOR" THINK="$THINK" WORKLOAD="$WORKLOAD" python3 - <<'PY'
-import os, json, time, urllib.request, concurrent.futures
+import os, json, time, urllib.request, concurrent.futures, itertools, random, string
 
 URL = os.environ["URL"]; MODEL = os.environ["MODEL"]; THINK = os.environ.get("THINK", "raw")
 WORKLOAD = os.environ.get("WORKLOAD", "essay")
@@ -97,8 +117,38 @@ MAXTOK = int(os.environ["MAX_TOKENS"]); FLOOR = float(os.environ["FLOOR"])
 PROMPT_TOKENS = int(os.environ.get("PROMPT_TOKENS", "0"))
 LEVELS = [int(x) for x in os.environ["LEVELS"].split()]
 
-_ESSAY = ("Write a long, detailed essay about the history and architecture of "
-          "distributed database systems:")
+# Distinct essay topics, rotated per request via a global counter, tagged with a
+# per-invocation nonce, generated at temp 0.7 — see the v4 header note. A stateful
+# context-window drafter (DSpark-style) replays text it has recently seen; a bench
+# that lets two requests generate the same text measures the drafter's memory, not
+# the server's throughput.
+_TOPICS = [
+    "the history and architecture of distributed database systems",
+    "how container orchestration schedulers make placement decisions",
+    "the evolution of instruction set architectures since the 1970s",
+    "consensus protocols and why they are hard to implement correctly",
+    "the design trade-offs of columnar versus row-oriented storage",
+    "how modern compilers decide what to inline and what to vectorize",
+    "the engineering history of undersea communication cables",
+    "memory allocators and the fragmentation problems they solve",
+    "the development of public-key cryptography and its deployment",
+    "how time synchronization works across datacenters",
+    "the architecture of modern content delivery networks",
+    "garbage collection strategies in managed language runtimes",
+    "the design of fault-tolerant filesystems for commodity hardware",
+    "how query optimizers estimate cost and why they get it wrong",
+    "the evolution of GPU architectures for general-purpose compute",
+    "network congestion control from TCP Reno to BBR",
+    "the engineering behind high-frequency trading infrastructure",
+    "schema migration strategies in continuously deployed systems",
+]
+_NONCE = "".join(random.choices(string.ascii_lowercase, k=6))
+_REQ_COUNTER = itertools.count()
+
+def _essay_prompt():
+    i = next(_REQ_COUNTER)
+    topic = _TOPICS[i % len(_TOPICS)]
+    return f"[{_NONCE}-{i}] Write a long, detailed essay about {topic}:"
 # Community peak-finder (Tony/hdub): trivial prompt, digits out, natural termination — high
 # MTP acceptance (~99%) exposes the compute-bound headline number. NOT a realistic decode rate.
 _TRIVIAL = "Count from 1 to 300, separated by commas. Numbers only."
@@ -125,14 +175,16 @@ def one(uid):
         req = urllib.request.Request(URL + "/v1/chat/completions", data=body,
                                      headers={"Content-Type": "application/json"})
     elif THINK == "raw":
-        prompt = (PREFIX + f"\n[solicitud {uid}] " + _ESSAY) if PROMPT_TOKENS > 0 else _ESSAY
+        essay = _essay_prompt()
+        prompt = (PREFIX + "\n" + essay) if PROMPT_TOKENS > 0 else essay
         body = json.dumps({"model": MODEL, "prompt": prompt, "max_tokens": MAXTOK,
-                           "ignore_eos": True, "temperature": 0}).encode()
+                           "ignore_eos": True, "temperature": 0.7, "top_p": 0.95}).encode()
         req = urllib.request.Request(URL + "/v1/completions", data=body,
                                      headers={"Content-Type": "application/json"})
     else:
         # chat endpoint so the template's thinking switch applies (production sampling).
-        prompt = (PREFIX + f"\n[solicitud {uid}] " + _ESSAY) if PROMPT_TOKENS > 0 else _ESSAY
+        essay = _essay_prompt()
+        prompt = (PREFIX + "\n" + essay) if PROMPT_TOKENS > 0 else essay
         body = json.dumps({"model": MODEL, "messages": [{"role": "user", "content": prompt}],
                            "max_tokens": MAXTOK, "ignore_eos": True,
                            "temperature": 0.6, "top_p": 0.95,
@@ -145,10 +197,28 @@ def one(uid):
     ct = d.get("usage", {}).get("completion_tokens", MAXTOK)
     return ct, dt
 
-print(f"  warming up... (prompt ~{PROMPT_TOKENS or 30} tok)"); one(0); one(1)
+def spec_counters():
+    """Spec-decode counters (drafts, accepted, generated) or None if not exposed."""
+    try:
+        m = urllib.request.urlopen(URL.rsplit("/v1", 1)[0] + "/metrics", timeout=3).read().decode()
+    except Exception:
+        return None
+    vals = {}
+    for l in m.splitlines():
+        for k in ("spec_decode_num_drafts_total", "spec_decode_num_accepted_tokens_total",
+                  "generation_tokens_total"):
+            if l.startswith(f"vllm:{k}{{"):
+                vals[k] = vals.get(k, 0.0) + float(l.rsplit(" ", 1)[1])
+    if "spec_decode_num_drafts_total" not in vals:
+        return None
+    return (vals["spec_decode_num_drafts_total"],
+            vals.get("spec_decode_num_accepted_tokens_total", 0.0),
+            vals.get("generation_tokens_total", 0.0))
+
+print(f"  warming up... (prompt ~{PROMPT_TOKENS or 30} tok, workload nonce {_NONCE})"); one(0); one(1)
 print()
-print(f"  {'users':>5} | {'per-user tok/s':>14} | {'aggregate tok/s':>15} | {'avg latency':>11}")
-print(f"  {'-'*5}-+-{'-'*14}-+-{'-'*15}-+-{'-'*11}")
+print(f"  {'users':>5} | {'per-user tok/s':>14} | {'aggregate tok/s':>15} | {'avg latency':>11} | {'acc/draft':>9} | {'tok/step':>8}")
+print(f"  {'-'*5}-+-{'-'*14}-+-{'-'*15}-+-{'-'*11}-+-{'-'*9}-+-{'-'*8}")
 
 def settle():
     """Wait for the server to drain between levels — stragglers from the previous
@@ -173,18 +243,25 @@ def settle():
 practical_max = LEVELS[0]
 for n in LEVELS:
     settle()
+    c0 = spec_counters()
     with concurrent.futures.ThreadPoolExecutor(max_workers=n) as ex:
         w0 = time.time()
         res = list(ex.map(one, range(n)))
         wall = time.time() - w0
+    c1 = spec_counters() if c0 else None
     total = sum(r[0] for r in res)
     per_user = sum(r[0] / r[1] for r in res) / len(res)
     agg = total / wall
     lat = sum(r[1] for r in res) / len(res)
+    acc_s, tps_s = "-", "-"
+    if c0 and c1 and c1[0] > c0[0]:
+        dd = c1[0] - c0[0]
+        acc_s = f"{(c1[1] - c0[1]) / dd:.2f}"
+        tps_s = f"{(c1[2] - c0[2]) / dd:.2f}"
     flag = "  ← below usable floor" if per_user < FLOOR else ""
     if per_user >= FLOOR:
         practical_max = n
-    print(f"  {n:>5} | {per_user:>14.1f} | {agg:>15.0f} | {lat:>9.2f}s{flag}")
+    print(f"  {n:>5} | {per_user:>14.1f} | {agg:>15.0f} | {lat:>9.2f}s | {acc_s:>9} | {tps_s:>8}{flag}")
 
 print()
 print(f"  ➤ Practical ceiling (per-user stays ≥ {FLOOR:.0f} tok/s): ~{practical_max} concurrent users")
