@@ -101,7 +101,7 @@ except: print('')" 2>/dev/null)
 fi
 
 echo "=================================================================="
-echo "  vLLM Concurrency Bench v3 — concurrency sweep"
+echo "  vLLM Concurrency Bench v4 — concurrency sweep"
 echo "  Server: $URL   Model: $MODEL   max_tokens: $MAX_TOKENS   think: $THINK   workload: $WORKLOAD"
 echo "  Levels: $LEVELS   |   floor: ${FLOOR} tok/s   |   prompt: ${PROMPT_TOKENS} tok (0=short)"
 echo "  Date:   $(date '+%Y-%m-%d %H:%M:%S')"
