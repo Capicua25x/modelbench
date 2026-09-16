@@ -12,7 +12,7 @@ mrexodia's `b0cf244c`, `cf6ff1e2` — none matched the pin `a09a589c`).
 Upstream's sanctioned path for a lab: rebuild → **repeat the GPU gate** → explicit
 pin update.
 
-## What was done (gx10a, kit at main 8404ac7)
+## What was done (node-a, kit at main 8404ac7)
 
 - Built with the official tools: `extensions/cooperative_moe/archive_upstream.sh`
   (host-side git archive of the pinned ExLlamaV3 commit) + the git-free `build.sh`

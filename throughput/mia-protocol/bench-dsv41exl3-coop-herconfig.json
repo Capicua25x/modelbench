@@ -2,7 +2,7 @@
  "label": "dsv41exl3-coop-herconfig",
  "model": "DeepSeek-v4.1-Flash-EXL3",
  "protocol": "mia-cooperative-moe",
- "prompt_set": "/home/ludwid/dsv41-exl3/extensions/cooperative_moe/benchmarks/workloads.json",
+ "prompt_set": "~/dsv41-exl3/extensions/cooperative_moe/benchmarks/workloads.json",
  "started": "2026-09-16T13:02:48-0400",
  "sampled": [
   {
