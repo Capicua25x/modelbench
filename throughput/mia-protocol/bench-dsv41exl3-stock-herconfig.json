@@ -1,0 +1,227 @@
+{
+ "label": "dsv41exl3-stock-herconfig",
+ "model": "DeepSeek-v4.1-Flash-EXL3",
+ "protocol": "mia-cooperative-moe",
+ "prompt_set": "/home/ludwid/dsv41-exl3/extensions/cooperative_moe/benchmarks/workloads.json",
+ "started": "2026-09-16T13:17:54-0400",
+ "sampled": [
+  {
+   "workload": "poetry",
+   "per_seed": [
+    22.83,
+    26.05,
+    25.03
+   ],
+   "median": 25.03,
+   "acceptance": 0.2228
+  },
+  {
+   "workload": "code",
+   "per_seed": [
+    43.27,
+    37.49,
+    42.8
+   ],
+   "median": 42.8,
+   "acceptance": 0.3573
+  },
+  {
+   "workload": "incident",
+   "per_seed": [
+    null,
+    null,
+    null
+   ],
+   "median": null,
+   "acceptance": 0.3962
+  }
+ ],
+ "c1": [
+  {
+   "rep": 0,
+   "tok_s": 33.93
+  },
+  {
+   "rep": 1,
+   "tok_s": 33.69
+  },
+  {
+   "rep": 2,
+   "tok_s": 32.6
+  }
+ ],
+ "c2": [
+  {
+   "rep": 0,
+   "agg_tok_s": 51.23,
+   "per_stream": [
+    26.14,
+    26.75
+   ]
+  },
+  {
+   "rep": 1,
+   "agg_tok_s": 53.22,
+   "per_stream": [
+    26.61,
+    27.54
+   ]
+  },
+  {
+   "rep": 2,
+   "agg_tok_s": 51.58,
+   "per_stream": [
+    25.79,
+    28.13
+   ]
+  }
+ ],
+ "prefill": [
+  {
+   "target_tokens": 32000,
+   "prompt_tokens": 32023,
+   "ttft_s": 41.073,
+   "prefill_tok_s": 779.7
+  }
+ ],
+ "acceptance": [
+  {
+   "phase": "poetry",
+   "start": {
+    "tag": "poetry:start",
+    "acc": 0.0,
+    "draft": 0.0
+   },
+   "end": {
+    "tag": "poetry:end",
+    "acc": 641.0,
+    "draft": 2877.0
+   }
+  },
+  {
+   "phase": "code",
+   "start": {
+    "tag": "code:start",
+    "acc": 641.0,
+    "draft": 2877.0
+   },
+   "end": {
+    "tag": "code:end",
+    "acc": 1639.0,
+    "draft": 4587.0
+   }
+  },
+  {
+   "phase": "incident",
+   "start": {
+    "tag": "incident:start",
+    "acc": 1639.0,
+    "draft": 4587.0
+   },
+   "end": {
+    "tag": "incident:end",
+    "acc": 2572.0,
+    "draft": 6492.0
+   }
+  },
+  {
+   "phase": "c1[0]",
+   "start": {
+    "tag": "c1[0]:start",
+    "acc": 2572.0,
+    "draft": 6492.0
+   },
+   "end": {
+    "tag": "c1[0]:end",
+    "acc": 2803.0,
+    "draft": 7002.0
+   }
+  },
+  {
+   "phase": "c1[1]",
+   "start": {
+    "tag": "c1[1]:start",
+    "acc": 2803.0,
+    "draft": 7002.0
+   },
+   "end": {
+    "tag": "c1[1]:end",
+    "acc": 3035.0,
+    "draft": 7512.0
+   }
+  },
+  {
+   "phase": "c1[2]",
+   "start": {
+    "tag": "c1[2]:start",
+    "acc": 3035.0,
+    "draft": 7512.0
+   },
+   "end": {
+    "tag": "c1[2]:end",
+    "acc": 3258.0,
+    "draft": 8043.0
+   }
+  },
+  {
+   "phase": "c2[0]",
+   "start": {
+    "tag": "c2[0]:start",
+    "acc": 3258.0,
+    "draft": 8043.0
+   },
+   "end": {
+    "tag": "c2[0]:end",
+    "acc": 3735.0,
+    "draft": 9012.0
+   }
+  },
+  {
+   "phase": "c2[1]",
+   "start": {
+    "tag": "c2[1]:start",
+    "acc": 3735.0,
+    "draft": 9012.0
+   },
+   "end": {
+    "tag": "c2[1]:end",
+    "acc": 4203.0,
+    "draft": 10005.0
+   }
+  },
+  {
+   "phase": "c2[2]",
+   "start": {
+    "tag": "c2[2]:start",
+    "acc": 4203.0,
+    "draft": 10005.0
+   },
+   "end": {
+    "tag": "c2[2]:end",
+    "acc": 4667.0,
+    "draft": 11007.0
+   }
+  }
+ ],
+ "summary": {
+  "sampled_medians": {
+   "poetry": 25.03,
+   "code": 42.8,
+   "incident": null
+  },
+  "c1_median": 33.69,
+  "c1_all": [
+   33.93,
+   33.69,
+   32.6
+  ],
+  "c2_median": 51.58,
+  "c2_all": [
+   51.23,
+   53.22,
+   51.58
+  ],
+  "prefill_32k_tok_s": 779.7
+ },
+ "finished": "2026-09-16T13:22:46-0400"
+}
