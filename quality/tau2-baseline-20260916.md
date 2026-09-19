@@ -31,6 +31,24 @@ Sign test on the 24 flips: **p ≈ 0.15 — not significant.** Verdict: **no mea
 Unpinned OpenRouter pass (same model, provider routing default/mixed, same protocol otherwise):
 telecom 0.9298 · airline 0.8200 · retail 0.9333 → **203/224 = 0.9063**. Kept as context only — mixed upstreams.
 
+## Predecessor reference — V4-Flash 4.0 pair (native FP8-class, archived lane)
+
+The 4.0 era ran the same instruments on the same pair. Protocol deltas declared: 79-preamble effort class
+(vs this lane's template `max`), τ² c=6 (vs c=2), same tasks/judge/sim/seed; cells are cross-era, read the deltas.
+
+| instrument | 4.0 pair | 4.1 pair (EXL3 2.9bpw) | 4.0 vendor | 4.1 vendor |
+|---|---:|---:|---:|---:|
+| τ² telecom (114 tasks) | **113 = 0.9912** | 107 = 0.9386 | 0.9825 | 0.9649 |
+| SWE-bench Verified 0:100 | 79 | **95** | 80 | 97 |
+| TB Hard-44 (+×3 clock) | 22/44 | 23/44 | — | 23/44 (regular) |
+| class-A gsm8k / aime / ifeval / gpqa | .947 / .989 / .946 / **.922** | .94 / 1.0 / .95 / .867 | — | .94 / 1.0 / .9625 / .917 |
+
+**Read:** the generation moved SWE +16 (pair) / +17 (vendor) and held TB, while **telecom slipped on both
+sides** — vendor −2 items, pair −6. So the 4.1 telecom dip is a model-generation (and cross-era protocol)
+effect, not a quant penalty: the pair-vs-vendor offset stayed flat across generations (4.0: +1 telecom item,
+−1 SWE; 4.1: −3 telecom, −2 SWE — both within flip-test noise, p≈0.15). The quant remained in parity with
+first-party serving in both generations; the newer model is simply not the stronger telecom player.
+
 ## Caveats
 
 - **n=1** per domain, sampling temp 1.0 → per-domain swings (airline/retail ±8 pts) are well inside run-to-run
