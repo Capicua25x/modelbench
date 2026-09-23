@@ -1,7 +1,7 @@
 import os
 #!/usr/bin/env python3
 """AA-LCR runner: contexto largo (~100K tok) + juez de equivalencia.
-Uso: aa_lcr_runner.py <tag> <base_url> [api_key] [limit] [seed]
+Uso: aa_lcr_runner.py <tag> <base_url> [ignored-arg] [limit] [seed]
 Salida: $BENCH_OUT_DIR (defecto ./results/aa-lcr)/<tag>_s<seed>.jsonl + resumen."""
 import json
 import re, os, sys, time, zipfile, urllib.request, concurrent.futures as cf
@@ -17,7 +17,35 @@ TEMP = float(os.environ.get("BENCH_TEMP", "0.6"))
 TOPP = float(os.environ.get("BENCH_TOPP", "0.95"))
 
 TAG, URL = sys.argv[1], sys.argv[2]
-KEY = sys.argv[3] if len(sys.argv) > 3 else ""
+def _bench_secret(name):
+    """Read a key from the canonical store; never printed."""
+    try:
+        for _l in open(os.path.expanduser("~/apexia-shared/secrets.env")):
+            if _l.startswith(name + "="):
+                return _l.split("=", 1)[1].strip().strip('"').strip("'")
+    except OSError:
+        pass
+    return ""
+
+
+def _resolve_key(url, argv_key):
+    """Keys NEVER come from argv (ps-visible — operator 2026-09-22): argv[3] stays
+    positional-compatible but is ignored. Local endpoints get 'dummy'; vendor
+    endpoints resolve BENCH_API_KEY -> DEEPSEEK_API_KEY (HF_TOKEN for huggingface)
+    -> the canonical secrets file."""
+    if argv_key and argv_key not in ("dummy", "-") and argv_key.startswith("sk-"):
+        print("WARNING: api key in argv is deprecated (ps-visible) and ignored — "
+              "use BENCH_API_KEY / DEEPSEEK_API_KEY / the secrets file", file=sys.stderr)
+    if "localhost" in url or "127.0.0.1" in url:
+        return "dummy"
+    if "huggingface" in url:
+        return (os.environ.get("BENCH_API_KEY") or os.environ.get("HF_TOKEN")
+                or _bench_secret("HF_TOKEN"))
+    return (os.environ.get("BENCH_API_KEY") or os.environ.get("DEEPSEEK_API_KEY")
+            or _bench_secret("DEEPSEEK_API_KEY"))
+
+
+KEY = _resolve_key(URL, sys.argv[3] if len(sys.argv) > 3 else "")
 LIMIT = int(sys.argv[4]) if len(sys.argv) > 4 else 100
 SEED = int(sys.argv[5]) if len(sys.argv) > 5 else 1234
 OUT = os.environ.get("BENCH_OUT_DIR", "./results/aa-lcr"); os.makedirs(OUT, exist_ok=True)
