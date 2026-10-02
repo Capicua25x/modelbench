@@ -4,34 +4,28 @@ Serving-speed side of the bench: how fast an arm decodes, and how many concurren
 requests it holds before it preempts. Accuracy/agentic harnesses live in `../harness/`
 and `../lengths/`.
 
-- **`concurrency-bench.sh`** — the tok/s sweep driver (v4: replay-proof essay workload +
-  per-cell spec-decode acceptance). Levels, `--trivial` (community peak-finder) and
-  `--prompt-tokens N` (context-bound shape), `--think on|off|raw`. A tok/s is
-  uninterpretable without its `acc/draft` column and prompt shape.
-- **`concurrency-test-arm.sh`** — per-arm envelope test. Run after a model swap,
-  BEFORE an accuracy bench; the aggregate-tok/s knee and the preemption Δ set the safe
-  bench concurrency.
+> **The concurrency protocol is `mia_protocol.py`** (MiaAI-Lab's cooperative-MoE protocol;
+> operator 2026-10-02 — estate-wide, prod `:8011` included). The in-house v4 sweep and Tony's
+> V4.1 bench were **retired** to `retired/` (receipts stay). One protocol, comparable to her
+> published cells: don't compare across protocols, and since its reference C1 is
+> fixed-prompt/temp-0, quote the sampled workloads (poetry/code/incident) for acceptance claims.
 
-- **`tony-v41bench.py`** — Tony's (`tonyd2wild`) V4.1 benchmark, kept **verbatim** from
-  `tonyd2wild/DeepSeek-V4.1-Flash-vLLM-DGX-Spark` → `bench/v41bench.py` (adopted
-  2026-09-16) so our cells compare 1:1 with his published results. Fixed prompt set v1
-  (8 categories + a counting ceiling) × `--levels` × `--prefill`; temp 0, thinking off;
-  tokens from the server's usage block; TTFT = first content delta; each request carries
-  a unique front tag (defeats prefix cache).
-  Run: `python3 tony-v41bench.py --base <url>/v1 --model <id> --label <l> --out out/` →
-  `bench-<label>.{json,md}`.
+- **`mia_protocol.py`** — Mia's measurement protocol, workloads verbatim from
+  `extensions/cooperative_moe/benchmarks/workloads.json`: poetry/code/incident × seeds 11/23/47
+  (512-cap, temp 1, top_p .95), reference C1/C2 (hash-map prompt, temp 0, 400 outputs, C2 with a
+  start barrier), a cold 32K prefill probe, and spec-decode acceptance from `/metrics`. Formulas
+  exactly as documented (C1 = (ct−1)/(last−first **content**); C2 summed over the shared window).
+  Caveat: with a reasoning parser, the thinking-ON incident case lands in `reasoning`, so the
+  content-time formula yields nothing — use the reasoning-inclusive rate, or match parser config.
+  Run: `python3 mia_protocol.py --base http://127.0.0.1:8888/v1 --model <id> --out <dir> --label <l> [--reps 3]`.
+  Prod `:8011`: `--base http://localhost:8011/v1 --model qwen`.
 
-- **`mia_protocol.py`** — runner for **MiaAI-Lab's cooperative-MoE measurement protocol**
-  (kit `docs/cooperative-moe.md`; workloads verbatim from the kit's
-  `extensions/cooperative_moe/benchmarks/workloads.json`): poetry/code/incident × seeds
-  11/23/47 (512-cap, temp 1, top_p .95), reference C1/C2 (hash-map prompt, temp 0, 400
-  outputs, C2 with a start barrier), a cold 32K prefill probe, and spec-decode acceptance
-  from `/metrics`. Formulas exactly as documented (C1 = (ct−1)/(last−first **content**);
-  C2 summed over the shared window). Caveat: on builds with a reasoning parser the
-  thinking-ON incident case lands in `reasoning`, so the content-time formula yields
-  nothing — report the reasoning-inclusive rate, or match the parser config.
-  First published run (2026-09-16, stock vs cooperative on the same two-Spark box):
-  `mia-protocol/` — see the summary md there.
+## Retired (2026-10-02) → `retired/`
 
-> Hostnames/ports/paths in these scripts and results are private working values;
-> sanitize before publishing anything derived from them.
+- `concurrency-bench.sh` — the in-house v4 tok/s sweep (rotating-topic essay + trivial + acc/draft).
+- `concurrency-test-arm.sh` — per-arm envelope test (run after a model swap, before the accuracy bench).
+- `tony-v41bench.py` — Tony's (`tonyd2wild`) V4.1 benchmark, kept verbatim for 1:1 comparability.
+
+The private `master` lineage additionally carried `bench_sweep_apx.py`, `render-conc-matrix.py` and
+`run-cap*-conc-*.sh` — same retirement there. **Receipts stay where they were**: `apx-results/`,
+`conc-logs/`, `tony-v41/`, `mia-protocol/`.
