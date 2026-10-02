@@ -7,15 +7,20 @@ OpenAI-compatible `/v1` endpoint; nothing here is model- or vendor-specific.
 
 ## Throughput
 
-```bash
-# per-user + aggregate tok/s at several concurrency levels (defaults: levels "1 16", :8011)
-throughput/concurrency-bench.sh --url http://localhost:8011 --model qwen \
-  --think on --levels "1 4 8 16 32 64"                  # short prompts (~30 tok)
-throughput/concurrency-bench.sh ... --prompt-tokens 6000 --levels "1 4 8 16 32"   # long prompts
+The concurrency protocol is Mia's (`throughput/mia_protocol.py`, 2026-10-02; prod `:8011` included —
+the in-house v4 sweep and Tony's bench are retired to `throughput/retired/`):
 
-# the full per-configuration battery (short + 6k sweeps + long-context preemption probe):
-throughput/concurrency-test-arm.sh <tag> [url]
+```bash
+# prod :8011
+python3 throughput/mia_protocol.py --base http://localhost:8011/v1 --model qwen \
+  --label qwen-<date> --out ~/logs --reps 3
+# pair (tunnel to the head node's :8888)
+python3 throughput/mia_protocol.py --base http://<host>:8888/v1 --model <served-id> \
+  --label pair-<date> --out ~/logs --reps 3
 ```
+
+Reference C1/C2 + poetry/code/incident + a cold 32K prefill + spec-decode acceptance; a tok/s without
+its `acc/draft` column and prompt shape is uninterpretable.
 
 Conventions that keep numbers comparable: fixed 256-token completions, thinking state pinned per run,
 single-run cells, pair configurations back-to-back in the same quiet window (cross-window comparisons on a
