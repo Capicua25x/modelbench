@@ -20,6 +20,7 @@ usage:
   mia_protocol.py --base http://127.0.0.1:8888/v1 --model DeepSeek-v4.1-Flash-EXL3 \
                   --out ~/logs --label dsv41exl3-stock [--reps 3]
 """
+import os
 import argparse
 import json
 import re
@@ -30,7 +31,8 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-WORKLOADS = Path.home() / "dsv41-exl3/extensions/cooperative_moe/benchmarks/workloads.json"
+WORKLOADS = Path(os.environ.get("MIA_WORKLOADS", str(
+    Path.home() / "dsv41-exl3/extensions/cooperative_moe/benchmarks/workloads.json")))
 HASHMAP = ("Write a detailed step-by-step explanation of how a hash map works, "
            "including collision handling, resizing, and time complexity. Be thorough.")
 
@@ -77,7 +79,7 @@ def stream_chat(base, model, prompt, max_tokens, temperature, top_p, thinking,
                 usage = ev["usage"]
             for ch in ev.get("choices") or []:
                 d = ch.get("delta") or {}
-                piece = (d.get("content") or "") + (d.get("reasoning") or "")
+                piece = (d.get("content") or "") + (d.get("reasoning_content") or d.get("reasoning") or "")
                 if not piece:
                     continue
                 now = time.perf_counter()
@@ -91,7 +93,11 @@ def stream_chat(base, model, prompt, max_tokens, temperature, top_p, thinking,
     ct = int((usage or {}).get("completion_tokens", 0))
     pt = int((usage or {}).get("prompt_tokens", 0))
     dec = ((ct - 1) / (c_last - c_first)) if (c_first and c_last and ct > 1 and c_last > c_first) else None
-    return {"ct": ct, "pt": pt, "decode": dec,
+    dec_all = ((ct - 1) / (a_last - a_first)) if (a_first and a_last and ct > 1 and a_last > a_first) else None
+    # Thinking-on cases can land every token in reasoning (no content window): fall back to the
+    # reasoning-inclusive rate so the case is not a silent None (TensorFold streams `reasoning_content`).
+    return {"ct": ct, "pt": pt, "decode": dec if dec is not None else dec_all,
+            "decode_content": dec, "decode_all": dec_all,
             "ttft_content": (c_first - t0) if c_first else None,
             "ttft_any": (a_first - t0) if a_first else None,
             "c_first": c_first, "c_last": c_last, "total": time.perf_counter() - t0}
@@ -100,6 +106,25 @@ def stream_chat(base, model, prompt, max_tokens, temperature, top_p, thinking,
 def c2_batch(base, model, max_tokens=400, timeout=1800):
     """Two streams, start barrier; aggregate over the shared content window."""
     c = 2
+    barrier = threading.Barrier(c)
+    def one(i):
+        p = f"{HASHMAP} (stream {i + 1}/{c})"
+        barrier.wait()
+        return stream_chat(base, model, p, max_tokens, 0, 1, False, timeout=timeout)
+    with ThreadPoolExecutor(max_workers=c) as ex:
+        res = list(ex.map(one, range(c)))
+    first = min(r["c_first"] for r in res)
+    last = max(r["c_last"] for r in res)
+    toks = sum(r["ct"] - 1 for r in res)
+    agg = toks / (last - first) if last > first else None
+    return {"agg_tok_s": agg, "per_stream": [r["decode"] for r in res],
+            "ct": [r["ct"] for r in res]}
+
+
+def c6_batch(base, model, max_tokens=400, timeout=1800):
+    """Six streams, start barrier; aggregate over the shared content window.
+    Extension by the operator 2026-09-23 (Mia's documented protocol covers C1/C2 only)."""
+    c = 6
     barrier = threading.Barrier(c)
     def one(i):
         p = f"{HASHMAP} (stream {i + 1}/{c})"
@@ -128,7 +153,7 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     res = {"label": args.label, "model": args.model, "protocol": "mia-cooperative-moe",
            "prompt_set": str(WORKLOADS), "started": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-           "sampled": [], "c1": [], "c2": [], "prefill": [], "acceptance": []}
+           "sampled": [], "c1": [], "c2": [], "c6": [], "prefill": [], "acceptance": []}
 
     def snap(tag):
         m = metrics(args.base)
@@ -174,6 +199,14 @@ def main():
                           "per_stream": [round(x, 2) if x else None for x in b["per_stream"]]})
         res["acceptance"].append({"phase": f"c2[{i}]", "start": a0, "end": a1})
         print(f"  C2[{i}]: agg {res['c2'][-1]['agg_tok_s']} tok/s {res['c2'][-1]['per_stream']}", flush=True)
+    for i in range(args.reps):
+        a0 = snap(f"c6[{i}]:start")
+        b = c6_batch(args.base, args.model)
+        a1 = snap(f"c6[{i}]:end")
+        res["c6"].append({"rep": i, "agg_tok_s": round(b["agg_tok_s"], 2) if b["agg_tok_s"] else None,
+                          "per_stream": [round(x, 2) if x else None for x in b["per_stream"]]})
+        res["acceptance"].append({"phase": f"c6[{i}]", "start": a0, "end": a1})
+        print(f"  C6[{i}]: agg {res['c6'][-1]['agg_tok_s']} tok/s {res['c6'][-1]['per_stream']}", flush=True)
 
     # ---- cold 32K prefill probe ---------------------------------------------
     nonce = str(int(time.time()))
@@ -188,12 +221,15 @@ def main():
     # ---- summary -------------------------------------------------------------
     c1s = [x["tok_s"] for x in res["c1"] if x["tok_s"]]
     c2s = [x["agg_tok_s"] for x in res["c2"] if x["agg_tok_s"]]
+    c6s = [x["agg_tok_s"] for x in res["c6"] if x["agg_tok_s"]]
     res["summary"] = {
         "sampled_medians": {r["workload"]: r["median"] for r in res["sampled"]},
         "c1_median": round(st.median(c1s), 2) if c1s else None,
         "c1_all": c1s,
         "c2_median": round(st.median(c2s), 2) if c2s else None,
         "c2_all": c2s,
+        "c6_median": round(st.median(c6s), 2) if c6s else None,
+        "c6_all": c6s,
         "prefill_32k_tok_s": res["prefill"][0]["prefill_tok_s"],
     }
     res["finished"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
